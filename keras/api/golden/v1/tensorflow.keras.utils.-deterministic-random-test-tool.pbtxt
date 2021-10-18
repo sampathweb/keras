@@ -1,0 +1,13 @@
+path: "tensorflow.keras.utils.DeterministicRandomTestTool"
+tf_class {
+  is_instance: "<class \'keras.legacy_tf_layers.variable_scope_shim.DeterministicRandomTestTool\'>"
+  is_instance: "<type \'object\'>"
+  member_method {
+    name: "__init__"
+    argspec: "args=[\'self\', \'seed\', \'mode\'], varargs=None, keywords=None, defaults=[\'42\', \'constant\'], "
+  }
+  member_method {
+    name: "scope"
+    argspec: "args=[\'self\'], varargs=None, keywords=None, defaults=None"
+  }
+}
