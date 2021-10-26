@@ -310,6 +310,36 @@ class TextVectorizationLayerTest(keras_parameterized.TestCase,
         adapt_data=vocab_data)
     self.assertAllClose(expected_output, output_data)
 
+  @parameterized.product(
+      rank=[0, 1, 2],
+      # Check lists, numpy arrays, tensors, and objects convertable to tensor.
+      data_fn=[None, np.array, tf.constant, preprocessing_test_utils.ArrayLike]
+  )
+  def test_input_types(self, rank, data_fn):
+    input_data = "earth wind and fire"
+    expected_output = [2, 3, 4, 5]
+    if rank == 1:
+      input_data = [input_data]
+      expected_output = [expected_output]
+    elif rank == 2:
+      input_data = [[input_data]]
+      expected_output = [expected_output]
+    if data_fn is not None:
+      input_data = data_fn(input_data)
+    input_shape = [] if rank == 0 else [1]
+
+    layer = text_vectorization.TextVectorization(
+        vocabulary=["earth", "wind", "and", "fire"])
+    output_data = layer(input_data)
+    self.assertAllEqual(expected_output, output_data)
+
+    # Again in a keras.Model
+    inputs = keras.Input(shape=input_shape, dtype=tf.string)
+    outputs = layer(inputs)
+    model = keras.Model(inputs=inputs, outputs=outputs)
+    output_data = model(tf.constant(input_data))
+    self.assertAllEqual(expected_output, output_data)
+
   def test_scalar_input_int_mode_no_len_limit(self):
     vocab_data = [
         "fire earth earth", "earth earth", "wind wind", "and wind and"
@@ -348,41 +378,6 @@ class TextVectorizationLayerTest(keras_parameterized.TestCase,
     layer.set_vocabulary(["earth", "wind", "and", "fire"])
     out = layer(input_data)
     self.assertAllClose(out.numpy(), [2, 3, 4, 5, 5, 4, 2, 1, 0, 0])
-
-  def test_list_inputs_1d(self):
-    vocab_data = ["two two two", "two three three", "three four four five"]
-    input_data = ["two three", "four five"]
-    layer = text_vectorization.TextVectorization()
-    layer.adapt(vocab_data)
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
-    layer.set_vocabulary(["two", "three", "four", "five"])
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
-
-  def test_tensor_inputs(self):
-    vocab_data = tf.constant(
-        ["two two two", "two three three", "three four four five"])
-    input_data = tf.constant(["two three", "four five"])
-    layer = text_vectorization.TextVectorization()
-    layer.adapt(vocab_data)
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
-    layer.set_vocabulary(["two", "three", "four", "five"])
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
-
-  def test_list_inputs_2d(self):
-    vocab_data = [
-        ["two two two"], ["two three three"], ["three four four five"]]
-    input_data = [["two three"], ["four five"]]
-    layer = text_vectorization.TextVectorization()
-    layer.adapt(vocab_data)
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
-    layer.set_vocabulary(["two", "three", "four", "five"])
-    out = layer(input_data)
-    self.assertAllClose(out.numpy(), [[2, 3], [4, 5]])
 
   def test_dataset_of_single_strings(self):
     vocab_data = ["two two two", "two three three", "three four four five"]
@@ -691,8 +686,7 @@ class TextVectorizationPreprocessingTest(
         standardize=None,
         split=text_vectorization.SPLIT_ON_WHITESPACE,
         output_mode=None)
-    with self.assertRaisesRegex(RuntimeError,
-                                ".*tokenize strings, the innermost dime.*"):
+    with self.assertRaisesRegex(RuntimeError, "last shape dimension must be 1"):
       _ = layer(input_data)
 
   def test_string_splitting_with_non_1d_raggedarray_fails(self):
@@ -703,8 +697,7 @@ class TextVectorizationPreprocessingTest(
         standardize=None,
         split=text_vectorization.SPLIT_ON_WHITESPACE,
         output_mode=None)
-    with self.assertRaisesRegex(RuntimeError,
-                                ".*tokenize strings, the innermost dime.*"):
+    with self.assertRaisesRegex(RuntimeError, "last shape dimension must be 1"):
       _ = layer(input_data)
 
   def test_standardization_with_invalid_standardize_arg(self):
