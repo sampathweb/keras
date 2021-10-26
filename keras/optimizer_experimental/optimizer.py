@@ -77,7 +77,20 @@ class _BaseOptimizer(tf.__internal__.tracking.AutoTrackable):
     """
     raise NotImplementedError
 
-  def _compute_gradients(self, loss, var_list, tape=None):
+  def compute_gradients(self, loss, var_list, tape=None):
+    """Compute gradients of loss on trainable variables.
+
+    Args:
+      loss: `Tensor` or callable. If a callable, `loss` should take no arguments
+        and return the value to minimize.
+      var_list: list or tuple of `Variable` objects to update to minimize
+        `loss`.
+      tape: (Optional) `tf.GradientTape`.
+
+    Returns:
+      A list of (gradient, variable) pairs. Variable is always present, but
+      gradient can be `None`.
+    """
     if tape is None:
       tape = tf.GradientTape()
     if callable(loss):
@@ -85,7 +98,7 @@ class _BaseOptimizer(tf.__internal__.tracking.AutoTrackable):
         tape.watch(var_list)
         loss = loss()
     grads = tape.gradient(loss, var_list)
-    return grads, var_list
+    return zip(grads, var_list)
 
   def _clip_gradients(self, grads):
     clipped_grads = []
@@ -240,6 +253,36 @@ class _BaseOptimizer(tf.__internal__.tracking.AutoTrackable):
         dtype=model_variable.dtype,
         trainable=False)
 
+  def transform_loss(self, loss):
+    """Function that transforms the loss.
+
+    This function is guaranteed to be called before computing gradients.
+    By default this function does not do any thing. Users can override this
+    function to implement their own logic.
+
+    Args:
+      loss: `Tensor` or callable. The loss object.
+
+    Returns:
+      `Tensor` or callable. The loss object.
+    """
+    return loss
+
+  def process_gradients(self, grads_and_vars):
+    """Function that processes the gradients.
+
+    This function is guaranteed to be called after computing gradients.
+    By default this function does not do any thing. Users can override this
+    function to implement their own logic.
+
+    Args:
+      grads_and_vars: List of (gradient, variable) pairs.
+
+    Returns:
+      List of (gradient, variable) pairs.
+    """
+    return grads_and_vars
+
   def minimize(self, loss, var_list, tape=None):
     """Minimize `loss` by updating `var_list`.
 
@@ -250,8 +293,7 @@ class _BaseOptimizer(tf.__internal__.tracking.AutoTrackable):
 
     Args:
       loss: `Tensor` or callable. If a callable, `loss` should take no arguments
-        and return the value to minimize. If a `Tensor`, the `tape` argument
-        must be passed.
+        and return the value to minimize.
       var_list: list or tuple of `Variable` objects to update to minimize
         `loss`.
       tape: (Optional) `tf.GradientTape`.
@@ -259,8 +301,10 @@ class _BaseOptimizer(tf.__internal__.tracking.AutoTrackable):
     Returns:
       None
     """
-    grads, var_list = self._compute_gradients(loss, var_list, tape)
-    self.apply_gradients(zip(grads, var_list))
+    loss = self.transform_loss(loss)
+    grads_and_vars = self.compute_gradients(loss, var_list, tape)
+    grads_and_vars = self.process_gradients(grads_and_vars)
+    self.apply_gradients(grads_and_vars)
 
   def apply_gradients(self, grads_and_vars):
     """Apply gradients to variables.
@@ -409,7 +453,33 @@ class Optimizer(_BaseOptimizer):
       variable = variable._distributed_container()
     return super(Optimizer, self)._var_key(variable)
 
-  def _aggregate_gradients(self, grads_and_vars):
+  def process_aggregated_gradients(self, grads_and_vars):
+    """Function that processes aggregated gradients.
+
+    This function is guaranteed to be called after aggregating gradients.
+    By default this function does not do any thing. Users can override this
+    function to implement their own logic.
+
+    Args:
+      grads_and_vars: List of (gradient, variable) pairs.
+
+    Returns:
+      List of (gradient, variable) pairs.
+    """
+    return grads_and_vars
+
+  def aggregate_gradients(self, grads_and_vars):
+    """Aggreate gradients on all devices.
+
+    By default we will perform reduce_sum of gradients across devices. Users can
+    implement their own aggregation logic by overriding this method.
+
+    Args:
+      grads_and_vars: List of (gradient, variable) pairs.
+
+    Returns:
+      List of (gradient, variable) pairs.
+    """
     return optimizer_utils.all_reduce_sum_gradients(grads_and_vars)
 
   def apply_gradients(self, grads_and_vars, skip_gradients_aggregation=False):
@@ -429,7 +499,8 @@ class Optimizer(_BaseOptimizer):
       RuntimeError: If called in a cross-replica context.
     """
     if not skip_gradients_aggregation:
-      grads_and_vars = self._aggregate_gradients(grads_and_vars)
+      grads_and_vars = self.aggregate_gradients(grads_and_vars)
+      grads_and_vars = self.process_aggregated_gradients(grads_and_vars)
     super().apply_gradients(grads_and_vars)
 
   def _internal_apply_gradients(self, grads_and_vars):
